@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html ng-app="myApp">
+
+  <head>
+
+    <style>
+      .center {
+        background: red;
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        border: 1px solid darkred;
+        -webkit-box-shadow: 0px 0px 2px 0px rgba(150,0,0,1);
+        -moz-box-shadow: 0px 0px 2px 0px rgba(150,0,0,1);
+        box-shadow: 0px 0px 2px 0px rgba(150,0,0,1);
+      }
+    </style>
+    <script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
+
+    <script src= "//ajax.googleapis.com/ajax/libs/angularjs/1.3.14/angular.min.js"></script>
+    <script src= "//ajax.googleapis.com/ajax/libs/angularjs/1.3.14/angular-route.min.js"></script>
+
+        <!-- Latest compiled and minified CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css">
+
+    <!-- Optional theme -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap-theme.min.css">
+
+    <link rel="stylesheet" href="http://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.3/leaflet.css" />
+
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.3/leaflet.js"></script>
+
+
+    <link rel="stylesheet" href="leaflet.draw.css" />
+
+    <script src="leaflet.draw.js"></script>
+
+    <title>averaging...</title>
+
+        <script>
+      var app = angular.module('myApp', ['ngRoute']);
+
+
+      function initMap($scope){
+        var map = L.map('map').setView([53.55, 10], 3);
+
+        L.tileLayer('http://maps.vesseltracker.com/vesseltracker/{z}/{x}/{y}.png', {
+            attribution: 'vesseltracker.com map',
+            maxZoom: 18
+        }).addTo(map);
+
+        // Initialise the FeatureGroup to store editable layers
+        var drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        // Initialise the draw control and pass it the FeatureGroup of editable layers
+        var drawControl = new L.Control.Draw({
+            edit: {
+                featureGroup: drawnItems
+            },
+            draw: {
+              polyline: false,
+              polygon: false,
+              rectangle: false,
+              circle: false
+            }
+        });
+        map.addControl(drawControl);
+
+        var myIcon = L.divIcon({className: 'center'});
+
+        $scope.averageMarker = L.marker([0, 0], {icon: myIcon}).bindPopup("<b>Hello world!</b><br>I am a popup.");
+
+        map.on('draw:created', function (e) {
+          var type = e.layerType;
+          if (type === 'marker') {
+            $scope.$apply(function(){
+              addMarker($scope, e.layer.getLatLng());
+            });
+          }
+        });
+
+        map.on('draw:editstop', function () {
+          $scope.$apply(function(){
+            addMarker($scope, e.layer.getLatLng());
+          });
+        });
+
+        map.on('draw:deleted', function (e) {
+          $scope.$apply(function(){
+            update($scope);
+          });
+        });
+
+        $scope.map = map;
+        $scope.drawnItems = drawnItems;
+      }
+
+      function getAverage(layers){
+        var sumLat = 0, sumLng = 0, count = 0;
+        layers.getLayers().forEach(function(layer){
+          var ll = layer.getLatLng();
+          count++;
+          sumLat += ll.lat;
+          sumLng += ll.lng;
+        });
+        return new L.latLng(sumLat / count, sumLng / count);
+      }
+
+      function geoCode($scope){
+        $scope.geocoding = null;
+        var center = $scope.averageMarker.getLatLng();
+        $.getJSON('http://nominatim.openstreetmap.org/reverse?format=json&lat=' + center.lat + '&lon=' + center.lng + '&zoom=10', function(data, status){
+          if (!data.error){
+            var text = $scope.averageMarker.getPopup().getContent() + '<br>' + data.display_name;
+            $scope.averageMarker.getPopup().setContent(text);
+          }
+        });
+
+      };
+
+      function update($scope){
+        // add average marker if has not been added yet
+        if ($scope.drawnItems.getLayers().length > 1 && !$scope.averageMarker._map){
+          $scope.averageMarker.addTo($scope.map);
+        }
+
+        // remove marker if there is no average
+        if ($scope.drawnItems.getLayers().length < 2 && $scope.averageMarker._map){
+          $scope.map.removeLayer($scope.averageMarker);
+        }
+
+
+        if ($scope.drawnItems.getLayers().length > 1){
+          var latLng = getAverage($scope.drawnItems);
+
+          $scope.averageMarker.setLatLng(latLng);
+          $scope.averageMarker.getPopup().setContent("I am the center!<br>@ " + latLng.lat.toPrecision(6) + " : " + latLng.lng.toPrecision(6));
+          if ($scope.geocoding){
+            clearTimeout($scope.geocoding);
+            $scope.geocoding = null;
+          }
+          $scope.geocoding = setTimeout(function(){
+            geoCode($scope);
+          }, 400);
+        }
+        var data = toData($scope);
+
+        if (data!== ''){
+          $scope.location.search('data', data);
+        } else {
+          $scope.location.search('data', null);
+        }
+
+
+      }
+
+      function toData($scope){
+        var layers = $scope.drawnItems.getLayers().map(function(layer){
+          // console.log('toData');
+          var latLng = layer.getLatLng();
+          return latLng.lat + ":" + latLng.lng;
+        });
+        return layers.join('/');
+      }
+
+      function addMarker($scope, latLng){
+        var latLng = latLng || new L.latLng(53.55, 10);
+        var marker = L.marker(latLng).addTo($scope.drawnItems);
+
+        marker.on('drag', function(){
+          $scope.$apply(function(){
+            update($scope);
+          });
+
+        });
+        update($scope);
+      }
+
+      function loadMarkers($scope, data){
+        data.split('/').forEach(function(m){
+          addMarker($scope, new L.latLng(m.split(':')));
+        });
+      }
+
+      app.controller('mainCtrl', ['$scope', '$location', function($scope, $location) {
+
+        initMap($scope);
+
+        $scope.location = $location;
+        if ($location.search().data){
+          loadMarkers($scope, $location.search().data);
+        }
+
+
+
+
+        // console.log(am = $scope.averageMarker);
+
+        $scope.add = function(){
+          addMarker($scope);
+        };
+      }]);
+
+    </script>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      @media (min-width: 400px) {
+          body{font-size: 50px;}
+      }
+      @media (max-width: 400px) {
+          body{font-size: 30px;}
+      }
+    </style>
+  </head>
+
+  <body ng-controller="mainCtrl">
+      <div id="map" style="position:absolute; top:0px; bottom:0px; left:0px; right:0px; background:transparent;"></div>
+  </body>
+</html>
